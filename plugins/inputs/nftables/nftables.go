@@ -4,6 +4,9 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"os/exec"
+	"fmt"
+	"regexp"
+	"strings"
 )
 
 type NFTables struct {
@@ -44,20 +47,38 @@ type Counter struct {
 	Bytes   int64
 }
 
-func (selt *NFTables) parseOutput(data string) ([]Element) {
-	keys := []string{"34:64:a9:ce:72:3f", "8a:9d:a4:3b:3b:4f", "10.0.3.1", "172.17.0.1"}
-	counter := Counter{Packets: 1, Bytes: 2}
+func (selt *NFTables) parseFlowTableOutput(data string, tableName string, flowTableName string) (elements []Element) {
 
-	elements := []Element{{keys, counter}}
+	r := regexp.MustCompile("table ip " + tableName + " \\{.*flow table " + flowTableName + " \\{.*elements = \\{([^\\}]*)\\}.*\\}.*")
+	match := r.FindAllStringSubmatch(strings.Replace(data, "\n", " ", -1), -1)
+	if len(match) > 0 {
+		candidate := match[0][1]
+		for _, entry := range strings.Split(candidate, ",") {
+			parsedEntry := strings.Split(entry, " : ")
+			keysStr, counterStr := parsedEntry[0], parsedEntry[1]
+
+			unTrimmedKeys := strings.Split(keysStr, " . ")
+			keys := []string{}
+			for _, key := range unTrimmedKeys {
+				keys = append(keys, strings.Trim(key, " "))
+			}
+
+			counter := Counter{}
+			fmt.Sscanf(counterStr, "counter packets %d bytes %d", &(counter.Packets), &(counter.Bytes))
+			elements = append(elements, Element{Keys: keys, Counter: counter})
+
+		}
+	}
+
 	return elements
 }
 
 func (self *NFTables) queryFlowTables() ([] Table) {
-
 	const tableName = "filter"
 	var flowTableNames = [...]string{"ift", "oft", "fft"}
 
-	types := []string{"ether_saddr", "ether_daddr", "ip_saddr", "ip_daddr"}
+	//types := []string{"ether_saddr", "ether_daddr", "ip_saddr", "ip_daddr"}
+	types := []string{"ip_saddr", "ip_daddr"}
 
 	nftablePath, err := exec.LookPath("nft")
 	if err != nil {
@@ -71,16 +92,18 @@ func (self *NFTables) queryFlowTables() ([] Table) {
 		var args []string
 		name := "sudo"
 		args = append(args, nftablePath)
-		args = append(args, "list", "flow", tableName)
-		args = append(args, "filter", flowTableName)
+		args = append(args, "list", "flow", "table", tableName)
+		args = append(args, flowTableName)
 
 		c := exec.Command(name, args...)
-		if out, err := c.Output(); err != nil {
-			elements := self.parseOutput(string(out))
-
+		if out, err := c.Output(); err == nil {
+			elements := self.parseFlowTableOutput(string(out), tableName, flowTableName)
 			chain.Flowtables = append(chain.Flowtables, FlowTable{Name: flowTableName, Elements: elements, Types: types})
 			chains = append(chains, chain)
 
+		} else {
+
+			panic(err)
 		}
 
 	}
