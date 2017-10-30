@@ -5,16 +5,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseTableData(t *testing.T) {
+func TestParseFlowTable(t *testing.T) {
+	ft := NFTables{}
+	types, matcher := ft.parseTypes("flow table oft { ip saddr . ip daddr counter}  tcp dport 5000", "oft")
 
-	data := `table ip filter
-table ip toto`
-
-	nft := NFTables{}
-	tables := nft.ParseTable(data)
-	assert.Equal(t, 2, len(tables))
-	assert.Equal(t, "filter", tables[0].Name)
-	assert.Equal(t, "toto", tables[0].Name)
-
+	assert.Equal(t, 2, len(types));
+	assert.Equal(t, "ip.saddr", types[0]);
+	assert.Equal(t, "ip.daddr", types[1]);
+	assert.Equal(t, "tcp.dport.5000", matcher);
 }
-

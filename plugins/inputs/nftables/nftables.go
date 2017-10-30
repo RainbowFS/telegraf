@@ -16,7 +16,9 @@ type NFTables struct {
 var NFTableConfig = `
   ## Configuration for nftables, LIG
   flowTables = [
-     "filter.cnt-ftable",
+     "filter.oft",
+	"filter.ift",
+"filter.fft",
 
   ]
 `
@@ -73,44 +75,73 @@ func (selt *NFTables) parseFlowTableOutput(data string, tableName string, flowTa
 	return elements
 }
 
-func (self *NFTables) queryFlowTables() ([] Table) {
-	const tableName = "filter"
-	var flowTableNames = [...]string{"ift", "oft", "fft"}
+func (self *NFTables) parseTypes(data string, flowTableName string) (types []string, matchPatter string) {
+	//eg.		flow table oft { ip saddr . ip daddr counter}  tcp dport 5000
 
-	//types := []string{"ether_saddr", "ether_daddr", "ip_saddr", "ip_daddr"}
-	types := []string{"ip_saddr", "ip_daddr"}
+	r := regexp.MustCompile("flow table " + flowTableName + " \\{(?: (.*) )counter\\}(.*)")
+	match := r.FindAllStringSubmatch(data, -1)
+	if len(match) > 0 {
+		for _, aType := range strings.Split(match[0][1], ".") {
+			types = append(types, strings.Replace(strings.Trim(aType, " "), " ", ".", -1))
+		}
+
+		matchPatter = match[0][1]
+
+	}
+
+	return types, matchPatter
+
+}
+
+func (self *NFTables) queryTypes(table string, chain string, flowTableName string) (types []string) {
 
 	nftablePath, err := exec.LookPath("nft")
 	if err != nil {
 		panic(err)
 	}
 
-	chains := []Chain{}
+	var args []string
+	name := "sudo"
+	args = append(args, nftablePath,"-nn")
+	args = append(args, "list", "flow", "table", "filter","|", "grep", flowTableName)
 
-	for _, flowTableName := range flowTableNames {
-		chain := Chain{Name: "dummy"}
-		var args []string
-		name := "sudo"
-		args = append(args, nftablePath)
-		args = append(args, "list", "flow", "table", tableName)
-		args = append(args, flowTableName)
+	c := exec.Command(name, args...)
+	if out, err := c.Output(); err == nil {
+		types, _ := self.parseTypes(string(out), flowTableName)
+		return types
 
-		c := exec.Command(name, args...)
-		if out, err := c.Output(); err == nil {
-			elements := self.parseFlowTableOutput(string(out), tableName, flowTableName)
-			chain.Flowtables = append(chain.Flowtables, FlowTable{Name: flowTableName, Elements: elements, Types: types})
-			chains = append(chains, chain)
+	} else {
 
-		} else {
-
-			panic(err)
-		}
-
+		panic(err)
 	}
 
-	table := Table{Name: "filter", Chains: chains}
+}
 
-	return []Table{table}
+func (self *NFTables) queryFlowTable(tableName string, chainName string, flowTableName string) (FlowTable) {
+
+	//types := []string{"ether_saddr", "ether_daddr", "ip_saddr", "ip_daddr"}
+
+	types := self.queryTypes(tableName, chainName, flowTableName)
+
+	nftablePath, err := exec.LookPath("nft")
+	if err != nil {
+		panic(err)
+	}
+
+	var args []string
+	name := "sudo"
+	args = append(args, nftablePath)
+	args = append(args, "list", "flow", "table", tableName)
+	args = append(args, flowTableName)
+
+	c := exec.Command(name, args...)
+	if out, err := c.Output(); err == nil {
+		elements := self.parseFlowTableOutput(string(out), tableName, flowTableName)
+		return FlowTable{Name: flowTableName, Elements: elements, Types: types}
+
+	} else {
+		panic(nil)
+	}
 
 }
 
@@ -124,29 +155,35 @@ func (s *NFTables) Description() string {
 
 func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
-	tables := self.queryFlowTables()
+	for _, configId := range self.FlowTables {
+		if tokens := strings.Split(configId, "."); len(tokens) == 3 {
+			tableName := tokens[0]
+			chainName := tokens[1]
+			flowTableName := tokens[2]
 
-	for _, table := range (tables) {
-		for _, chain := range (table.Chains) {
-			for _, flowTable := range (chain.Flowtables) {
-				for _, flowElement := range (flowTable.Elements) {
+			flowTable := self.queryFlowTable(tableName, chainName, flowTableName)
+			types := self.queryTypes(tableName, chainName, flowTableName)
 
-					fields := make(map[string]interface{})
-					tags := make(map[string]string)
+			for _, element := range flowTable.Elements {
 
-					fields["bytes"] = flowElement.Counter.Bytes
-					fields["packets"] = flowElement.Counter.Packets
+				fields := make(map[string]interface{})
+				fields["bytes"] = element.Counter.Bytes
+				fields["packets"] = element.Counter.Packets
 
-					for typeIndex, typeValue := range (flowTable.Types) {
-						tags[typeValue] = flowElement.Keys[typeIndex]
+				tags := make(map[string]string)
 
-					}
-
-					acc.AddFields("nftables", fields, tags)
-
+				for typeIndex, typeValue := range (flowTable.Types) {
+					tags[typeValue] = types[typeIndex]
 				}
+
+				acc.AddFields("nftables", fields, tags)
+
 			}
+
+		} else {
+			panic("invalid configuration " + configId)
 		}
+
 	}
 
 	return nil
