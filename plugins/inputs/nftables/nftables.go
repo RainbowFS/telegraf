@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"log"
+	"errors"
 )
 
 type NFTables struct {
@@ -16,9 +18,9 @@ type NFTables struct {
 var NFTableConfig = `
   ## Configuration for nftables, LIG
   flowTables = [
-     "filter.oft",
-	"filter.ift",
-"filter.fft",
+     "filter.output.oft",
+	"filter.intput.ift",
+	"filter.filter.fft",
 
   ]
 `
@@ -82,7 +84,7 @@ func (self *NFTables) parseTypes(data string, flowTableName string) (types []str
 	match := r.FindAllStringSubmatch(data, -1)
 	if len(match) > 0 {
 		for _, aType := range strings.Split(match[0][1], ".") {
-			types = append(types, strings.Replace(strings.Trim(aType, " "), " ", ".", -1))
+			types = append(types, strings.Replace(strings.Trim(aType, " "), " ", "_", -1))
 		}
 
 		matchPatter = match[0][1]
@@ -93,55 +95,59 @@ func (self *NFTables) parseTypes(data string, flowTableName string) (types []str
 
 }
 
-func (self *NFTables) queryTypes(table string, chain string, flowTableName string) (types []string) {
+func (self *NFTables) queryTypes(table string, chain string, flowTableName string) (types []string, err error) {
 
 	nftablePath, err := exec.LookPath("nft")
 	if err != nil {
-		panic(err)
+		panic("nft is not installed")
 	}
 
 	var args []string
 	name := "sudo"
-	args = append(args, nftablePath,"-nn")
-	args = append(args, "list", "flow", "table", "filter","|", "grep", flowTableName)
+	args = append(args, nftablePath, "-nn")
+	args = append(args, "list", "table", table)
 
 	c := exec.Command(name, args...)
-	if out, err := c.Output(); err == nil {
-		types, _ := self.parseTypes(string(out), flowTableName)
-		return types
+	if out, err2 := c.CombinedOutput(); err2 == nil {
 
-	} else {
+		c := regexp.MustCompile("(?sm).*chain " + chain + " \\{.*(flow table " + flowTableName + ".*)\\}")
+		if match := c.FindStringSubmatch(string(out)); len(match) >= 1 {
+			flowTableDesc := strings.Split(match[1], "\n")[0]
+			types, _ := self.parseTypes(flowTableDesc, flowTableName)
+			return types, nil
+		}
 
-		panic(err)
 	}
+
+	return []string{}, err
 
 }
 
-func (self *NFTables) queryFlowTable(tableName string, chainName string, flowTableName string) (FlowTable) {
+func (self *NFTables) queryFlowTable(tableName string, chainName string, flowTableName string) (FlowTable, error) {
 
 	//types := []string{"ether_saddr", "ether_daddr", "ip_saddr", "ip_daddr"}
 
-	types := self.queryTypes(tableName, chainName, flowTableName)
+	if nftablePath, err := exec.LookPath("nft"); err == nil {
 
-	nftablePath, err := exec.LookPath("nft")
-	if err != nil {
-		panic(err)
+		if types, err := self.queryTypes(tableName, chainName, flowTableName); err == nil {
+
+			var args []string
+			name := "sudo"
+			args = append(args, nftablePath, "-nn")
+			args = append(args, "list", "flow", "table", tableName)
+			args = append(args, flowTableName)
+
+			c := exec.Command(name, args...)
+			if out, err := c.Output(); err == nil {
+				elements := self.parseFlowTableOutput(string(out), tableName, flowTableName)
+				return FlowTable{Name: flowTableName, Elements: elements, Types: types}, nil
+
+			}
+
+		}
+
 	}
-
-	var args []string
-	name := "sudo"
-	args = append(args, nftablePath)
-	args = append(args, "list", "flow", "table", tableName)
-	args = append(args, flowTableName)
-
-	c := exec.Command(name, args...)
-	if out, err := c.Output(); err == nil {
-		elements := self.parseFlowTableOutput(string(out), tableName, flowTableName)
-		return FlowTable{Name: flowTableName, Elements: elements, Types: types}
-
-	} else {
-		panic(nil)
-	}
+	return FlowTable{}, errors.New("failed to query" + tableName + "." + chainName + "." + flowTableName + ". Ignoring")
 
 }
 
@@ -156,32 +162,43 @@ func (s *NFTables) Description() string {
 func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
 	for _, configId := range self.FlowTables {
+
 		if tokens := strings.Split(configId, "."); len(tokens) == 3 {
 			tableName := tokens[0]
 			chainName := tokens[1]
 			flowTableName := tokens[2]
 
-			flowTable := self.queryFlowTable(tableName, chainName, flowTableName)
-			types := self.queryTypes(tableName, chainName, flowTableName)
+			if flowTable, err := self.queryFlowTable(tableName, chainName, flowTableName); err == nil {
 
-			for _, element := range flowTable.Elements {
+				if types, err := self.queryTypes(tableName, chainName, flowTableName); err == nil {
 
-				fields := make(map[string]interface{})
-				fields["bytes"] = element.Counter.Bytes
-				fields["packets"] = element.Counter.Packets
+					for _, element := range flowTable.Elements {
 
-				tags := make(map[string]string)
+						fields := make(map[string]interface{})
+						fields["bytes"] = element.Counter.Bytes
+						fields["packets"] = element.Counter.Packets
 
-				for typeIndex, typeValue := range (flowTable.Types) {
-					tags[typeValue] = types[typeIndex]
+						tags := make(map[string]string)
+
+						for typeIndex, typeValue := range types {
+							tags[typeValue] = element.Keys[typeIndex]
+						}
+
+						tags["chain"] = chainName
+						tags["flowTable"] = flowTableName
+
+						acc.AddFields("nftables", fields, tags)
+
+					}
 				}
 
-				acc.AddFields("nftables", fields, tags)
+			} else {
+				log.Println(err) //ignoring this error
 
 			}
 
 		} else {
-			panic("invalid configuration " + configId)
+			log.Println("ignoring invalid configuration " + configId + " flow table is probably missing")
 		}
 
 	}
