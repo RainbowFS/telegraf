@@ -9,20 +9,18 @@ import (
 	"strings"
 	"log"
 	"errors"
+	"strconv"
 )
 
 type NFTables struct {
 	FlowTables []string
+	Tables     []string
 }
 
 var NFTableConfig = `
   ## Configuration for nftables, LIG
-  flowTables = [
-     "filter.output.oft",
-	"filter.intput.ift",
-	"filter.filter.fft",
 
-  ]
+  tables = [ "filter" ]
 `
 
 type Table struct {
@@ -51,7 +49,7 @@ type Counter struct {
 	Bytes   int64
 }
 
-func (selt *NFTables) parseFlowTableOutput(data string, tableName string, flowTableName string) (elements []Element) {
+func (self *NFTables) parseFlowTableOutput(data string, tableName string, flowTableName string) (elements []Element) {
 
 	r := regexp.MustCompile("table ip " + tableName + " \\{.*flow table " + flowTableName + " \\{.*elements = \\{([^\\}]*)\\}.*\\}.*")
 	match := r.FindAllStringSubmatch(strings.Replace(data, "\n", " ", -1), -1)
@@ -156,7 +154,7 @@ func (s *NFTables) SampleConfig() string {
 }
 
 func (s *NFTables) Description() string {
-	return "Gather flow data from an nftable table"
+	return "Gather chain data and flow data from an nftable table"
 }
 
 func (self *NFTables) Gather(acc telegraf.Accumulator) error {
@@ -203,7 +201,83 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
 	}
 
+	for _, tableName := range self.Tables {
+
+		if data, err := self.getTableData(tableName); err == nil {
+			counters := self.parseSingletonChain(data)
+
+			for chain, counter := range counters {
+
+				chainItems := strings.Split(chain, "_")
+
+				host_src := chainItems[0]
+				app_src := chainItems[1]
+				host_dst := chainItems[2]
+				app_dst := chainItems[3]
+
+				fields := make(map[string]interface{})
+				fields["bytes"] = counter.Bytes
+				fields["packets"] = counter.Packets
+
+				tags := make(map[string]string)
+
+				tags["host_src"] = host_src
+				tags["host_dst"] = host_dst
+				tags["app_src"] = app_src
+				tags["app_dst"] = app_dst
+
+				tags["host_app_src"] = host_src + "_" + app_src
+				tags["host_app_dst"] = host_dst + "_" + app_dst
+				tags["chain"] = chain
+
+				acc.AddFields("nftables", fields, tags)
+			}
+
+		}
+
+	}
+
 	return nil
+}
+
+func (self *NFTables) getTableData(tableName string) (string, error) {
+
+	if nftablePath, err := exec.LookPath("nft"); err == nil {
+		var args []string
+		name := "sudo"
+		args = append(args, nftablePath, "-nn")
+		args = append(args, "list", "table", tableName)
+
+		c := exec.Command(name, args...)
+		if out, err := c.Output(); err == nil {
+			return string(out), nil
+		}
+	}
+
+	return "", errors.New("failed to load table data for table " + tableName)
+
+}
+
+func (self *NFTables) parseSingletonChain(data string) map[string]Counter {
+
+	res := make(map[string]Counter)
+
+	data = strings.Replace(data, "\n", " ", -1)
+	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+) \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
+	matches := r.FindAllStringSubmatch(data, -1)
+
+	for _, match := range matches {
+		chainName := match[1]
+
+		packets, _ := strconv.ParseInt(match[2], 10, 64)
+		bytes, _ := strconv.ParseInt(match[3], 10, 64)
+
+		res[chainName] = Counter{packets, bytes}
+
+	}
+
+	return res
+
 }
 
 func init() {
