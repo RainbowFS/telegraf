@@ -157,6 +157,11 @@ func (s *NFTables) Description() string {
 	return "Gather chain data and flow data from an nftable table"
 }
 
+func (self *Counter) sum(c2 Counter) Counter {
+	return Counter{self.Packets + c2.Packets, self.Bytes + c2.Bytes}
+
+}
+
 func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
 	for _, configId := range self.FlowTables {
@@ -206,7 +211,42 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 		if data, err := self.getTableData(tableName); err == nil {
 			counters := self.parseSingletonChain(data)
 
+			aggregatedCounters := make(map[string]Counter)
+
 			for chain, counter := range counters {
+
+				chainItems := strings.Split(chain, "_")
+
+				host_src := chainItems[0]
+				app_src := chainItems[1]
+				host_dst := chainItems[2]
+				app_dst := chainItems[3]
+				port := chainItems[4]
+
+				aggregated_chain_name := host_src + "_" + app_src + "_" + host_dst + "_" + app_dst
+				currCount := aggregatedCounters[aggregated_chain_name]
+				aggregatedCounters[aggregated_chain_name] = currCount.sum(counter)
+
+				fields := make(map[string]interface{})
+				fields["bytes"] = counter.Bytes
+				fields["packets"] = counter.Packets
+
+				tags := make(map[string]string)
+
+				tags["host_src_port"] = host_src + "_" + port
+				tags["host_dst_port"] = host_dst + "_" + port
+				tags["app_src_port"] = app_src + "_" + port
+				tags["app_dst_port"] = app_dst + "_" + port
+
+				tags["host_app_src_port"] = host_src + "_" + app_src + "_" + port
+				tags["host_app_dst_port"] = host_dst + "_" + app_dst + "_" + port
+				tags["chain_port"] = host_src + "_" + app_src + "_" + host_dst + "_" + app_dst + "_" + port
+
+				acc.AddFields("nftables", fields, tags)
+
+			}
+
+			for chain, counter := range aggregatedCounters {
 
 				chainItems := strings.Split(chain, "_")
 
@@ -228,9 +268,10 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
 				tags["host_app_src"] = host_src + "_" + app_src
 				tags["host_app_dst"] = host_dst + "_" + app_dst
-				tags["chain"] = chain
+				tags["chain"] = host_src + "_" + app_src + "_" + host_dst + "_" + app_dst
 
 				acc.AddFields("nftables", fields, tags)
+
 			}
 
 		}
@@ -263,7 +304,7 @@ func (self *NFTables) parseSingletonChain(data string) map[string]Counter {
 	res := make(map[string]Counter)
 
 	data = strings.Replace(data, "\n", " ", -1)
-	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+) \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
+	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[0-9]+)+ \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
 	matches := r.FindAllStringSubmatch(data, -1)
 
 	for _, match := range matches {
