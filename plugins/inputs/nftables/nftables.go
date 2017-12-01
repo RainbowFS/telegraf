@@ -233,12 +233,12 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 
 				tags := make(map[string]string)
 
-				tags["host_src_port"] = host_src + "_" + port
+				tags["host_src"] = host_src
 				tags["host_dst_port"] = host_dst + "_" + port
-				tags["app_src_port"] = app_src + "_" + port
+				tags["app_src"] = app_src
 				tags["app_dst_port"] = app_dst + "_" + port
 
-				tags["host_app_src_port"] = host_src + "_" + app_src + "_" + port
+				tags["host_app_src"] = host_src + "_" + app_src
 				tags["host_app_dst_port"] = host_dst + "_" + app_dst + "_" + port
 				tags["chain_port"] = host_src + "_" + app_src + "_" + host_dst + "_" + app_dst + "_" + port
 
