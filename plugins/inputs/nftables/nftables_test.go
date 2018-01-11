@@ -106,8 +106,8 @@ func TestParseFlowTable(t *testing.T) {
 	types, matcher := ft.parseTypes("flow table oft { ip saddr . ip daddr counter}  tcp dport 5000", "oft")
 
 	assert.Equal(t, 2, len(types));
-	assert.Equal(t, "ip.saddr", types[0]);
-	assert.Equal(t, "ip.daddr", types[1]);
+	assert.Equal(t, "ip_saddr", types[0]);
+	assert.Equal(t, "ip_daddr", types[1]);
 	assert.Equal(t, "tcp.dport.5000", matcher);
 }
 

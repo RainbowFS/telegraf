@@ -221,7 +221,6 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 				app_src := chainItems[1]
 				host_dst := chainItems[2]
 				app_dst := chainItems[3]
-				port := chainItems[4]
 
 				aggregated_chain_name := host_src + "_" + app_src + "_" + host_dst + "_" + app_dst
 				currCount := aggregatedCounters[aggregated_chain_name]
@@ -234,14 +233,16 @@ func (self *NFTables) Gather(acc telegraf.Accumulator) error {
 				tags := make(map[string]string)
 
 				tags["host_src"] = host_src
-				tags["host_dst_port"] = host_dst + "_" + port
 				tags["app_src"] = app_src
-				tags["app_dst_port"] = app_dst + "_" + port
-
 				tags["host_app_src"] = host_src + "_" + app_src
-				tags["host_app_dst_port"] = host_dst + "_" + app_dst + "_" + port
-				tags["chain_port"] = host_src + "_" + app_src + "_" + host_dst + "_" + app_dst + "_" + port
 
+				if ( len(chainItems) == 5) {
+					port := chainItems[4]
+					tags["host_dst_port"] = host_dst + "_" + port
+					tags["app_dst_port"] = app_dst + "_" + port
+					tags["host_app_dst_port"] = host_dst + "_" + app_dst + "_" + port
+					tags["chain_port"] = host_src + "_" + app_src + "_" + host_dst + "_" + app_dst + "_" + port
+				}
 				acc.AddFields("nftables", fields, tags)
 
 			}
@@ -304,7 +305,7 @@ func (self *NFTables) parseSingletonChain(data string) map[string]Counter {
 	res := make(map[string]Counter)
 
 	data = strings.Replace(data, "\n", " ", -1)
-	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[0-9]+)+ \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
+	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+(?:_[0-9]+)?)+ \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
 	matches := r.FindAllStringSubmatch(data, -1)
 
 	for _, match := range matches {
