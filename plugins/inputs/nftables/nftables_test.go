@@ -26,6 +26,7 @@ ip saddr . ip daddr . tcp sport { 10.1.5.1 . 172.17.0.3 . 5000} jump h7_ipcli_h5
 ip daddr . ip saddr . tcp dport { 10.1.5.1 . 172.17.0.3 . 5000} jump h5_ipsrv_h7_ipcli
 ip saddr . ip daddr . tcp sport { 10.1.5.1 . 172.17.0.2 . 5000} jump h7_ipsrv_h5_ipsrv
 ip daddr . ip saddr . tcp dport { 10.1.5.1 . 172.17.0.2 . 5000} jump h5_ipsrv_h7_ipsrv
+ip daddr . ip saddr  { 10.1.5.1 . 172.17.0.2 } jump h5_h7
 }
 
 chain h7_ipcli2_h6_ipsrv2 {
@@ -34,6 +35,10 @@ counter packets 169252 bytes 9461164
 
 chain h6_ipsrv2_h7_ipcli2 {
 counter packets 111291 bytes 6265506204
+}
+
+chain h5_h7 {
+counter packets 123 bytes 456
 }
 
 chain h7_ipcli_h6_ipsrv2 {
@@ -101,15 +106,6 @@ counter packets 0 bytes 0
 }
 }`
 
-func TestParseFlowTable(t *testing.T) {
-	ft := NFTables{}
-	types, matcher := ft.parseTypes("flow table oft { ip saddr . ip daddr counter}  tcp dport 5000", "oft")
-
-	assert.Equal(t, 2, len(types));
-	assert.Equal(t, "ip_saddr", types[0]);
-	assert.Equal(t, "ip_daddr", types[1]);
-	assert.Equal(t, "tcp.dport.5000", matcher);
-}
 
 func TestParseSingletonChain(t *testing.T) {
 	ft := NFTables{}
@@ -127,5 +123,7 @@ func TestParseSingletonChain(t *testing.T) {
 
 	assert.Equal(t, int64(111291), res["h6_ipsrv2_h7_ipcli2"].Packets)
 	assert.Equal(t, int64(6265506204), res["h6_ipsrv2_h7_ipcli2"].Bytes)
+	assert.Equal(t, int64(456), res["h5_h7"].Bytes)
+	assert.Equal(t, int64(123), res["h5_h7"].Packets)
 
 }

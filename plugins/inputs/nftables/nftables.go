@@ -305,7 +305,7 @@ func (self *NFTables) parseSingletonChain(data string) map[string]Counter {
 	res := make(map[string]Counter)
 
 	data = strings.Replace(data, "\n", " ", -1)
-	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+_[a-zA-Z0-9]+(?:_[0-9]+)?)+ \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
+	r := regexp.MustCompile("chain ([a-zA-Z0-9]+_[a-zA-Z0-9]+(?:_[a-zA-Z0-9]+_[a-zA-Z0-9]+)?(?:_[0-9]+)?)+ \\{.*?counter packets ([0-9]+) bytes ([0-9]+)")
 	matches := r.FindAllStringSubmatch(data, -1)
 
 	for _, match := range matches {
